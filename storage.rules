@@ -1,0 +1,43 @@
+rules_version = '2';
+
+// Backblaze B2 Storage Rules (Reference)
+// Note: This file is for documentation purposes only.
+// Backblaze B2 does not use Firebase Storage rules.
+// Access control for B2 is managed through:
+// 1. Bucket settings (public/private)
+// 2. Application keys (read/write permissions)
+// 3. CORS configuration
+
+// Recommended B2 Bucket Configuration:
+// - Bucket Type: Public (for CDN delivery via Cloudflare)
+// - Bucket Encryption: Disabled (images are not sensitive)
+// - Lifecycle Rules: Optional (delete old images after X days if needed)
+// - CORS Configuration:
+//   {
+//     "corsRuleName": "allowWebUploads",
+//     "allowedOrigins": [
+//       "https://reporte-ciudadano-coatepec.vercel.app",
+//       "http://localhost:3000"
+//     ],
+//     "allowedOperations": [
+//       "b2_upload_file",
+//       "b2_upload_part",
+//       "s3_put"
+//     ],
+//     "allowedHeaders": [
+//       "authorization",
+//       "content-type",
+//       "x-bz-file-name",
+//       "x-bz-content-sha1"
+//     ],
+//     "exposeHeaders": [],
+//     "maxAgeSeconds": 3600
+//   }
+
+// Security Best Practices:
+// 1. Use separate application keys for client vs server operations
+// 2. Client key should have upload-only permissions to specific bucket
+// 3. Never expose master application key in client-side code
+// 4. Implement file validation on client side (type, size)
+// 5. Consider implementing server-side upload proxy for additional security
+// 6. Use Cloudflare for serving images (not direct B2 URLs) to avoid exposing bucket

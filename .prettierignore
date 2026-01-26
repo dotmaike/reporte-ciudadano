@@ -1,0 +1,13 @@
+# Ignore artifacts
+.next
+node_modules
+out
+build
+
+# Ignore configs
+*.config.js
+*.config.mjs
+
+# Ignore docs and assets
+/docs
+/public

@@ -1,0 +1,63 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Helper function to check if user is authenticated
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    // Helper function to check if the request is creating a new document
+    function isCreating() {
+      return !exists(/databases/$(database)/documents/reports/$(request.resource.id));
+    }
+
+    // Helper function to validate report data structure
+    function isValidReport() {
+      let data = request.resource.data;
+      return data.keys().hasAll(['category', 'description', 'location', 'imageUrl', 'status', 'createdAt'])
+        && data.category is string
+        && data.category in ['pothole', 'lighting', 'water_leak', 'garbage', 'civil_protection', 'animal_welfare']
+        && data.description is string
+        && data.description.size() >= 10
+        && data.description.size() <= 500
+        && data.location is map
+        && data.location.keys().hasAll(['lat', 'lng'])
+        && data.location.lat is number
+        && data.location.lng is number
+        && data.imageUrl is string
+        && data.status is string
+        && data.status in ['pending', 'in_progress', 'resolved', 'rejected']
+        && data.createdAt is timestamp;
+    }
+
+    // Reports collection rules
+    match /reports/{reportId} {
+      // Allow anyone to create a new report (public submission)
+      // This enables anonymous citizen reporting without authentication
+      allow create: if isValidReport()
+        && request.resource.data.status == 'pending'
+        && request.resource.data.createdAt == request.time;
+
+      // Allow anyone to read reports (public visibility)
+      // This enables the admin dashboard and public report viewing
+      allow read: if true;
+
+      // Only authenticated users can update reports (admin panel)
+      // This should be restricted to admin users in production
+      // For now, any authenticated user can update status
+      allow update: if isSignedIn()
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'updatedAt'])
+        && request.resource.data.status in ['pending', 'in_progress', 'resolved', 'rejected'];
+
+      // Only authenticated users can delete reports (admin cleanup)
+      allow delete: if isSignedIn();
+    }
+
+    // Deny access to all other collections
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
