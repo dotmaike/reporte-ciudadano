@@ -23,11 +23,7 @@ const BUCKET_NAME = process.env.B2_BUCKET_NAME ?? '';
  * @param contentType - The MIME type of the file
  * @returns The key of the uploaded file
  */
-export async function uploadToB2(
-  key: string,
-  body: Buffer,
-  contentType: string,
-): Promise<string> {
+export async function uploadToB2(key: string, body: Buffer, contentType: string): Promise<string> {
   const command = new PutObjectCommand({
     Bucket: BUCKET_NAME,
     Key: key,

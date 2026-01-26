@@ -32,6 +32,9 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   } catch (error) {
     console.error('Get image URL error:', error);
     const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
-    return NextResponse.json({ error: `Failed to get image URL: ${errorMessage}` }, { status: 500 });
+    return NextResponse.json(
+      { error: `Failed to get image URL: ${errorMessage}` },
+      { status: 500 },
+    );
   }
 }

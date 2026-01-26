@@ -60,7 +60,7 @@ async function generatePNGs() {
     console.log('Created public/favicon.png');
 
     console.log('\nPNG icons generated successfully!');
-  } catch (err) {
+  } catch {
     console.log('\nNote: Could not generate PNG icons (sharp not available).');
     console.log('SVG icons created. For full PWA support:');
     console.log('1. Run: pnpm approve-builds (select sharp)');

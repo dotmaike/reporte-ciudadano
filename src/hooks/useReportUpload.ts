@@ -56,7 +56,7 @@ export const useReportUpload = () => {
       const { imageUrl, key: imageKey } = await uploadResponse.json();
 
       // Step 3: Save the report metadata to Firebase Firestore
-      const { image, ...dataWithoutImage } = data;
+      const { image: _image, ...dataWithoutImage } = data;
       const geohash = encodeGeohash(data.location.lat, data.location.lng);
 
       const reportData: ReportData = {

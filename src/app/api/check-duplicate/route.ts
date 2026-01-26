@@ -1,4 +1,4 @@
-import { cert,getApps, initializeApp } from 'firebase-admin/app';
+import { cert, getApps, initializeApp } from 'firebase-admin/app';
 import { getFirestore } from 'firebase-admin/firestore';
 import { NextRequest, NextResponse } from 'next/server';
 
@@ -93,7 +93,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       const snapshot = await db
         .collection('reports')
         .where('geohash', '>=', geohash)
-        .where('geohash', '<', `${geohash  }\uf8ff`)
+        .where('geohash', '<', `${geohash}\uf8ff`)
         .where('category', '==', category)
         .get();
 
@@ -115,7 +115,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
           potentialDuplicates.push({
             id: doc.id,
             category: data.category,
-            description: `${data.description?.substring(0, 100)  }...`,
+            description: `${data.description?.substring(0, 100)}...`,
             status: data.status,
             distance: Math.round(distance),
             createdAt: reportDate.toISOString(),

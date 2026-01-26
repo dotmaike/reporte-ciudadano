@@ -287,7 +287,7 @@ export function ReportForm() {
             <FormField
               control={form.control}
               name="image"
-              render={({ field: { onChange, value, ...rest } }) => (
+              render={({ field: { onChange, value: _value, ...rest } }) => (
                 <FormItem>
                   <FormLabel>Evidencia Fotográfica</FormLabel>
                   <FormControl>
@@ -408,9 +408,7 @@ export function ReportForm() {
               disabled={isUploading || isChecking || showDuplicateWarning}
               className="w-full bg-municipality-green hover:bg-municipality-green/90"
             >
-              {(isUploading || isChecking) && (
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              )}
+              {(isUploading || isChecking) && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
               {isUploading && 'Enviando Reporte...'}
               {isChecking && !isUploading && 'Verificando...'}
               {!isUploading && !isChecking && 'Enviar Reporte'}
