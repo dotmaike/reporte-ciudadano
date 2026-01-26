@@ -10,6 +10,9 @@ Plataforma oficial para el levantamiento de reportes ciudadanos en Coatepec, Ver
 - **Optimización de Imágenes**: Compresión automática a WebP (33x reducción de tamaño)
 - **Arquitectura Zero-Cost**: Diseñado para operar con $0/mes hasta 50,000 reportes
 - **Mobile-First**: Optimizado para redes 4G inestables
+- **PWA (Progressive Web App)**: Instalable en pantalla de inicio, funciona offline
+- **Detección de Duplicados**: Previene reportes duplicados usando geohashing
+- **Validación de Área de Servicio**: Solo acepta reportes dentro del municipio (15km)
 - **Accesibilidad**: WCAG compliant usando shadcn/ui
 
 ## 🛠 Tech Stack
@@ -32,6 +35,9 @@ Plataforma oficial para el levantamiento de reportes ciudadanos en Coatepec, Ver
 
 - **browser-image-compression** (compresión WebP en cliente)
 - **AWS SDK S3** (integración con Backblaze B2)
+- **date-fns** (manejo de fechas con locale español)
+- **ngeohash** (indexación geoespacial para duplicados)
+- **next-pwa** (Progressive Web App con service worker)
 
 ## 📋 Prerequisitos
 
@@ -65,19 +71,9 @@ pnpm install
 ### 4. Configurar Backblaze B2
 
 1. Crear cuenta en [Backblaze B2](https://www.backblaze.com/b2)
-2. Crear un nuevo bucket (público)
-3. Generar Application Key con permisos de escritura
-4. Configurar CORS en el bucket:
-
-```json
-{
-  "corsRuleName": "allowWebUploads",
-  "allowedOrigins": ["https://tu-dominio.vercel.app", "http://localhost:3000"],
-  "allowedOperations": ["s3_put"],
-  "allowedHeaders": ["authorization", "content-type"],
-  "maxAgeSeconds": 3600
-}
-```
+2. Crear un nuevo bucket (puede ser privado - no requiere pago adicional)
+3. Generar Application Key con permisos de lectura/escritura
+4. Las credenciales se mantienen en el servidor (no se exponen al cliente)
 
 ### 5. Configurar Cloudflare CDN (Opcional pero recomendado)
 
@@ -96,7 +92,7 @@ cp .env.example .env.local
 Completar las variables:
 
 ```env
-# Firebase
+# Firebase (Client-side)
 NEXT_PUBLIC_FIREBASE_API_KEY=tu-api-key
 NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN=tu-proyecto.firebaseapp.com
 NEXT_PUBLIC_FIREBASE_PROJECT_ID=tu-proyecto-id
@@ -104,13 +100,16 @@ NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET=tu-proyecto.appspot.com
 NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID=tu-sender-id
 NEXT_PUBLIC_FIREBASE_APP_ID=tu-app-id
 
-# Backblaze B2
-NEXT_PUBLIC_B2_ENDPOINT=https://s3.us-west-004.backblazeb2.com
-NEXT_PUBLIC_B2_REGION=us-west-004
-NEXT_PUBLIC_B2_ACCESS_KEY_ID=tu-key-id
-NEXT_PUBLIC_B2_SECRET_ACCESS_KEY=tu-secret-key
-NEXT_PUBLIC_B2_BUCKET_NAME=tu-bucket-name
-NEXT_PUBLIC_CDN_URL=https://tu-bucket.cdn.backblazeb2.com
+# Firebase Admin (Server-side - para detección de duplicados)
+FIREBASE_CLIENT_EMAIL=firebase-adminsdk-xxxxx@tu-proyecto.iam.gserviceaccount.com
+FIREBASE_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----\n"
+
+# Backblaze B2 (Server-side only - NO usar NEXT_PUBLIC_)
+B2_ENDPOINT=https://s3.us-west-004.backblazeb2.com
+B2_REGION=us-west-004
+B2_ACCESS_KEY_ID=tu-key-id
+B2_SECRET_ACCESS_KEY=tu-secret-key
+B2_BUCKET_NAME=tu-bucket-name
 ```
 
 ### 7. Desplegar Firestore Rules
@@ -142,8 +141,24 @@ pnpm vercel
 
 ## 📱 Rutas
 
+### Páginas
+
 - `/` - Formulario de reportes ciudadanos
 - `/admin` - Panel de administración (requiere autenticación en producción)
+
+### API Routes
+
+- `/api/upload` - POST: Subir imagen a Backblaze B2
+- `/api/image` - GET: Obtener URL presignada para imagen
+- `/api/check-duplicate` - POST: Verificar reportes duplicados cercanos
+
+### PWA
+
+La aplicación es instalable como PWA. En dispositivos móviles:
+
+1. Abrir la app en el navegador
+2. Menú del navegador → "Agregar a pantalla de inicio"
+3. La app funcionará en modo standalone (sin barra de navegador)
 
 ## 🔒 Seguridad
 
@@ -160,9 +175,10 @@ Las reglas de seguridad están en `firestore.rules`:
 
 ### Backblaze B2
 
-- Usar Application Keys separadas para cliente/servidor
-- El key de cliente debe tener SOLO permisos de escritura
-- NUNCA exponer el master application key
+- Las credenciales B2 se mantienen exclusivamente en el servidor
+- Los uploads pasan por `/api/upload` (nunca directamente desde el cliente)
+- Las imágenes se acceden via URLs presignadas con expiración de 7 días
+- NUNCA usar variables `NEXT_PUBLIC_` para credenciales de B2
 
 ## 🎨 Customización
 
@@ -201,35 +217,53 @@ category: z.enum([
 ```
 src/
 ├── app/
-│   ├── admin/          # Panel de administración
-│   ├── layout.tsx      # Layout raíz con metadata SEO
-│   ├── page.tsx        # Página principal (formulario)
-│   ├── error.tsx       # Error boundary
-│   ├── not-found.tsx   # Página 404
-│   └── globals.css     # Estilos globales
+│   ├── admin/              # Panel de administración
+│   ├── api/
+│   │   ├── upload/         # API para subir imágenes a B2
+│   │   ├── image/          # API para generar URLs presignadas
+│   │   └── check-duplicate/ # API para detectar duplicados
+│   ├── layout.tsx          # Layout raíz con metadata SEO + PWA
+│   ├── page.tsx            # Página principal (formulario)
+│   ├── error.tsx           # Error boundary
+│   ├── not-found.tsx       # Página 404
+│   └── globals.css         # Estilos globales
 ├── components/
 │   ├── forms/
-│   │   └── ReportForm.tsx    # Formulario de reportes
-│   └── ui/             # Componentes shadcn/ui
+│   │   └── ReportForm.tsx  # Formulario de reportes
+│   └── ui/                 # Componentes shadcn/ui
 ├── hooks/
-│   ├── useReportUpload.ts    # Lógica de upload
-│   └── useToast.ts           # Sistema de notificaciones
+│   ├── useReportUpload.ts  # Lógica de upload
+│   ├── useDuplicateCheck.ts # Verificación de duplicados
+│   └── useToast.ts         # Sistema de notificaciones
 ├── lib/
-│   ├── firebase.ts     # Configuración Firebase
-│   └── utils.ts        # Utilidades
+│   ├── firebase.ts         # Configuración Firebase (cliente)
+│   ├── firebase-admin.ts   # Configuración Firebase Admin (servidor)
+│   ├── b2.ts               # Cliente B2 (servidor)
+│   ├── dates.ts            # Utilidades de fecha (date-fns)
+│   ├── location.ts         # Geohash y validación de ubicación
+│   └── utils.ts            # Utilidades generales
 └── schemas/
-    └── reportSchema.ts # Validación Zod
+    └── reportSchema.ts     # Validación Zod
+public/
+├── site.webmanifest        # Manifest PWA
+├── icon-192.png            # Icono PWA 192x192
+├── icon-512.png            # Icono PWA 512x512
+├── apple-touch-icon.png    # Icono iOS
+└── sw.js                   # Service worker (generado)
 ```
 
 ## 🧪 Scripts
 
 ```bash
 pnpm dev          # Servidor de desarrollo
-pnpm build        # Build de producción
+pnpm build        # Build de producción (genera service worker)
 pnpm start        # Servidor de producción
 pnpm lint         # Ejecutar ESLint
 pnpm lint:fix     # Fix automático de ESLint
 pnpm format       # Formatear con Prettier
+
+# Utilidades
+node scripts/generate-icons.mjs  # Regenerar iconos PWA
 ```
 
 ## 📚 Documentación
