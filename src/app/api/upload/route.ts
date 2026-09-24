@@ -4,6 +4,10 @@ import { generateImageKey, getPresignedUrl, uploadToB2 } from '@/lib/b2';
 
 export const runtime = 'nodejs';
 
+const ALLOWED_IMAGE_TYPES = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'];
+const MAX_FILE_SIZE = 10 * 1024 * 1024;
+const REPORT_ID_PATTERN = /^[a-zA-Z0-9_-]{6,128}$/;
+
 /**
  * POST /api/upload
  * Upload an image to B2 storage and return a presigned URL
@@ -25,18 +29,27 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       return NextResponse.json({ error: 'No reportId provided' }, { status: 400 });
     }
 
-    // Validate file type
-    const allowedTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
-    if (!allowedTypes.includes(file.type)) {
+    if (!REPORT_ID_PATTERN.test(reportId)) {
       return NextResponse.json(
-        { error: 'Invalid file type. Allowed: JPEG, PNG, WebP, GIF' },
+        { error: 'Invalid reportId. Use 6-128 letters, numbers, dashes or underscores.' },
+        { status: 400 },
+      );
+    }
+
+    // Validate file type
+    if (!ALLOWED_IMAGE_TYPES.includes(file.type)) {
+      return NextResponse.json(
+        { error: 'Invalid file type. Allowed: JPEG, PNG, WebP' },
         { status: 400 },
       );
     }
 
     // Validate file size (max 10MB)
-    const maxSize = 10 * 1024 * 1024; // 10MB
-    if (file.size > maxSize) {
+    if (file.size === 0) {
+      return NextResponse.json({ error: 'File is empty' }, { status: 400 });
+    }
+
+    if (file.size > MAX_FILE_SIZE) {
       return NextResponse.json({ error: 'File too large. Maximum size: 10MB' }, { status: 400 });
     }
 
@@ -45,7 +58,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     const buffer = Buffer.from(arrayBuffer);
 
     // Generate storage key and upload
-    const key = generateImageKey(reportId, file.name);
+    const key = generateImageKey(reportId, file.type);
     await uploadToB2(key, buffer, file.type);
 
     // Generate presigned URL for viewing (7 days expiration)

@@ -7,13 +7,26 @@ export interface PotentialDuplicate {
   status: string;
   distance: number;
   createdAt: string;
+  confidence: number;
+  level: DuplicateConfidenceLevel;
+  reasons: string[];
+  textSimilarity: number;
 }
+
+export type DuplicateConfidenceLevel = 'none' | 'possible' | 'likely';
 
 export interface DuplicateCheckResult {
   hasDuplicates: boolean;
+  level: DuplicateConfidenceLevel;
+  confidence: number;
   reports: PotentialDuplicate[];
   radius?: number;
+  strongRadius?: number;
   timeWindow?: number;
+  thresholds?: {
+    possible: number;
+    likely: number;
+  };
   message?: string;
 }
 
@@ -23,7 +36,12 @@ export const useDuplicateCheck = () => {
   const [error, setError] = useState<string | null>(null);
 
   const checkForDuplicates = useCallback(
-    async (lat: number, lng: number, category: string): Promise<DuplicateCheckResult> => {
+    async (
+      lat: number,
+      lng: number,
+      category: string,
+      description?: string,
+    ): Promise<DuplicateCheckResult> => {
       setIsChecking(true);
       setError(null);
 
@@ -33,7 +51,7 @@ export const useDuplicateCheck = () => {
           headers: {
             'Content-Type': 'application/json',
           },
-          body: JSON.stringify({ lat, lng, category }),
+          body: JSON.stringify({ lat, lng, category, description }),
         });
 
         if (!response.ok) {
@@ -54,6 +72,8 @@ export const useDuplicateCheck = () => {
 
         return {
           hasDuplicates: false,
+          level: 'none',
+          confidence: 0,
           reports: [],
           message: errorMessage,
         };

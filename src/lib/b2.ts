@@ -1,20 +1,42 @@
 import { GetObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 
-/**
- * Server-side only B2 client configuration
- * These credentials are never exposed to the browser
- */
-const b2Client = new S3Client({
-  endpoint: process.env.B2_ENDPOINT,
-  region: process.env.B2_REGION,
-  credentials: {
-    accessKeyId: process.env.B2_ACCESS_KEY_ID ?? '',
-    secretAccessKey: process.env.B2_SECRET_ACCESS_KEY ?? '',
-  },
-});
+const IMAGE_EXTENSION_BY_TYPE: Record<string, string> = {
+  'image/jpeg': 'jpg',
+  'image/jpg': 'jpg',
+  'image/png': 'png',
+  'image/webp': 'webp',
+};
 
-const BUCKET_NAME = process.env.B2_BUCKET_NAME ?? '';
+let b2Client: S3Client | null = null;
+
+function getRequiredEnv(name: string): string {
+  const value = process.env[name];
+  if (!value) {
+    throw new Error(`Missing required B2 environment variable: ${name}`);
+  }
+
+  return value;
+}
+
+function getB2Client(): S3Client {
+  if (!b2Client) {
+    b2Client = new S3Client({
+      endpoint: getRequiredEnv('B2_ENDPOINT'),
+      region: getRequiredEnv('B2_REGION'),
+      credentials: {
+        accessKeyId: getRequiredEnv('B2_ACCESS_KEY_ID'),
+        secretAccessKey: getRequiredEnv('B2_SECRET_ACCESS_KEY'),
+      },
+    });
+  }
+
+  return b2Client;
+}
+
+function getBucketName(): string {
+  return getRequiredEnv('B2_BUCKET_NAME');
+}
 
 /**
  * Upload a file to B2 storage
@@ -25,13 +47,13 @@ const BUCKET_NAME = process.env.B2_BUCKET_NAME ?? '';
  */
 export async function uploadToB2(key: string, body: Buffer, contentType: string): Promise<string> {
   const command = new PutObjectCommand({
-    Bucket: BUCKET_NAME,
+    Bucket: getBucketName(),
     Key: key,
     Body: body,
     ContentType: contentType,
   });
 
-  await b2Client.send(command);
+  await getB2Client().send(command);
   return key;
 }
 
@@ -43,21 +65,21 @@ export async function uploadToB2(key: string, body: Buffer, contentType: string)
  */
 export async function getPresignedUrl(key: string, expiresIn = 604800): Promise<string> {
   const command = new GetObjectCommand({
-    Bucket: BUCKET_NAME,
+    Bucket: getBucketName(),
     Key: key,
   });
 
-  return getSignedUrl(b2Client, command, { expiresIn });
+  return getSignedUrl(getB2Client(), command, { expiresIn });
 }
 
 /**
  * Generate the storage key for a report image
  * @param reportId - The report ID
- * @param filename - Original filename
+ * @param contentType - MIME type used to derive a trusted extension
  * @returns The storage key
  */
-export function generateImageKey(reportId: string, filename: string): string {
-  const extension = filename.split('.').pop() ?? 'webp';
+export function generateImageKey(reportId: string, contentType: string): string {
+  const extension = IMAGE_EXTENSION_BY_TYPE[contentType] ?? 'webp';
   const timestamp = Date.now();
   return `reports/${reportId}/${timestamp}.${extension}`;
 }

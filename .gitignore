@@ -4,6 +4,7 @@
 # Build artifacts
 /.next/
 /out/
+/tsconfig.tsbuildinfo
 
 # Local Environment Variables
 # Exclude all .env files but keep .env.example
@@ -44,6 +45,13 @@ Thumbs.db
 /public/sw.js.map
 /public/workbox-*.js
 /public/workbox-*.js.map
+
+# Design tooling and screenshots
+/.stitch-mcp/
+/docs/stitch-site/
+/docs/stitch-site-full/
+/docs/design/
+/.playwright-mcp/
 
 # Other
 .lock-wscript

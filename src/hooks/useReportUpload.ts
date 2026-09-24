@@ -1,5 +1,5 @@
 import imageCompression from 'browser-image-compression';
-import { collection, doc, setDoc } from 'firebase/firestore';
+import { collection, doc } from 'firebase/firestore';
 import { useState } from 'react';
 
 import { db } from '@/lib/firebase';
@@ -12,7 +12,6 @@ type ReportData = Omit<ReportFormValues, 'image'> & {
   imageKey: string;
   geohash: string;
   status: string;
-  createdAt: Date;
 };
 
 export const useReportUpload = () => {
@@ -66,20 +65,38 @@ export const useReportUpload = () => {
         imageKey, // Storage key for generating new presigned URLs
         geohash, // For proximity-based duplicate detection
         status: 'pending',
-        createdAt: new Date(),
       };
 
-      await setDoc(doc(db, 'reports', reportId), reportData);
+      const reportResponse = await fetch('/api/reports', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          reportId,
+          category: reportData.category,
+          description: reportData.description,
+          location: reportData.location,
+          imageUrl: reportData.imageUrl,
+          imageKey: reportData.imageKey,
+          geohash: reportData.geohash,
+        }),
+      });
 
-      setIsUploading(false);
+      if (!reportResponse.ok) {
+        const errorData = await reportResponse.json();
+        throw new Error(errorData.error || 'Error al guardar el reporte');
+      }
+
       return reportId;
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : 'Error desconocido al subir el reporte';
       setError(errorMessage);
-      setIsUploading(false);
       console.error(error);
       return null;
+    } finally {
+      setIsUploading(false);
     }
   };
 

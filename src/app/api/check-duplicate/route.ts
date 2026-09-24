@@ -1,7 +1,6 @@
-import { cert, getApps, initializeApp } from 'firebase-admin/app';
-import { getFirestore } from 'firebase-admin/firestore';
 import { NextRequest, NextResponse } from 'next/server';
 
+import { getAdminFirestore } from '@/lib/firebase-admin';
 import {
   calculateDistance,
   DUPLICATE_DETECTION_RADIUS,
@@ -12,27 +11,11 @@ import {
 
 export const runtime = 'nodejs';
 
-// Initialize Firebase Admin SDK for server-side Firestore access
-// This allows querying without exposing credentials to the client
-function getAdminFirestore() {
-  if (getApps().length === 0) {
-    // For local development, use the default credentials
-    // In production, use service account or ADC
-    initializeApp({
-      credential: cert({
-        projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID,
-        clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
-        privateKey: process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, '\n'),
-      }),
-    });
-  }
-  return getFirestore();
-}
-
 interface DuplicateCheckRequest {
   lat: number;
   lng: number;
   category: string;
+  description?: string;
 }
 
 interface ExistingReport {
@@ -42,6 +25,170 @@ interface ExistingReport {
   status: string;
   distance: number;
   createdAt: string;
+  confidence: number;
+  level: DuplicateConfidenceLevel;
+  reasons: string[];
+  textSimilarity: number;
+}
+
+type DuplicateConfidenceLevel = 'none' | 'possible' | 'likely';
+
+const POSSIBLE_DUPLICATE_THRESHOLD = 50;
+const LIKELY_DUPLICATE_THRESHOLD = 75;
+const STRONG_DISTANCE_METERS = 25;
+const NEAR_DISTANCE_METERS = DUPLICATE_DETECTION_RADIUS;
+const OUTER_DISTANCE_METERS = 100;
+const RECENT_REPORT_DAYS = 2;
+const CATEGORY_SCORE = 20;
+const ACTIVE_STATUS_SCORE = 5;
+
+const STOP_WORDS = new Set([
+  'a',
+  'al',
+  'con',
+  'de',
+  'del',
+  'el',
+  'en',
+  'esta',
+  'este',
+  'hay',
+  'la',
+  'las',
+  'lo',
+  'los',
+  'para',
+  'por',
+  'que',
+  'se',
+  'un',
+  'una',
+  'y',
+]);
+
+function getDuplicateLevel(confidence: number): DuplicateConfidenceLevel {
+  if (confidence >= LIKELY_DUPLICATE_THRESHOLD) return 'likely';
+  if (confidence >= POSSIBLE_DUPLICATE_THRESHOLD) return 'possible';
+  return 'none';
+}
+
+function getDistanceScore(distance: number): { score: number; reason: string | null } {
+  if (distance <= STRONG_DISTANCE_METERS) {
+    return { score: 35, reason: `Muy cerca: ${Math.round(distance)} m` };
+  }
+
+  if (distance <= NEAR_DISTANCE_METERS) {
+    return { score: 28, reason: `Cerca: ${Math.round(distance)} m` };
+  }
+
+  if (distance <= OUTER_DISTANCE_METERS) {
+    return { score: 14, reason: `Zona cercana: ${Math.round(distance)} m` };
+  }
+
+  return { score: 0, reason: null };
+}
+
+function getTimeScore(
+  reportDate: Date,
+  cutoffDate: Date,
+): { score: number; reason: string | null } {
+  if (reportDate < cutoffDate) return { score: 0, reason: null };
+
+  const ageDays = (Date.now() - reportDate.getTime()) / (24 * 60 * 60 * 1000);
+
+  if (ageDays <= RECENT_REPORT_DAYS) {
+    return { score: 20, reason: 'Reportado recientemente' };
+  }
+
+  return { score: 12, reason: 'Reportado dentro de la ventana activa' };
+}
+
+function normalizeText(text: string): string[] {
+  return text
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9ñ\s]/g, ' ')
+    .split(/\s+/)
+    .filter((token) => token.length > 2 && !STOP_WORDS.has(token));
+}
+
+function calculateTextSimilarity(currentDescription = '', existingDescription = ''): number {
+  const currentTerms = new Set(normalizeText(currentDescription));
+  const existingTerms = new Set(normalizeText(existingDescription));
+
+  if (currentTerms.size === 0 || existingTerms.size === 0) return 0;
+
+  let intersection = 0;
+  for (const term of currentTerms) {
+    if (existingTerms.has(term)) intersection += 1;
+  }
+
+  const union = new Set([...currentTerms, ...existingTerms]).size;
+  return union === 0 ? 0 : intersection / union;
+}
+
+function getTextScore(similarity: number): { score: number; reason: string | null } {
+  if (similarity >= 0.45) {
+    return { score: 20, reason: 'Descripción muy parecida' };
+  }
+
+  if (similarity >= 0.25) {
+    return { score: 12, reason: 'Descripción parcialmente parecida' };
+  }
+
+  if (similarity >= 0.12) {
+    return { score: 6, reason: 'Algunas palabras coinciden' };
+  }
+
+  return { score: 0, reason: null };
+}
+
+function scoreDuplicateCandidate({
+  categoryMatches,
+  currentDescription,
+  distance,
+  existingDescription,
+  reportDate,
+  status,
+  cutoffDate,
+}: {
+  categoryMatches: boolean;
+  currentDescription?: string;
+  distance: number;
+  existingDescription?: string;
+  reportDate: Date;
+  status?: string;
+  cutoffDate: Date;
+}) {
+  const reasons: string[] = [];
+  const distanceScore = getDistanceScore(distance);
+  const timeScore = getTimeScore(reportDate, cutoffDate);
+  const textSimilarity = calculateTextSimilarity(currentDescription, existingDescription);
+  const textScore = getTextScore(textSimilarity);
+  const activeStatus = status !== 'resolved' && status !== 'rejected';
+
+  if (distanceScore.reason) reasons.push(distanceScore.reason);
+  if (categoryMatches) reasons.push('Misma categoría');
+  if (timeScore.reason) reasons.push(timeScore.reason);
+  if (textScore.reason) reasons.push(textScore.reason);
+  if (activeStatus) reasons.push('Reporte aún activo');
+
+  const confidence = Math.min(
+    100,
+    distanceScore.score +
+      (categoryMatches ? CATEGORY_SCORE : 0) +
+      timeScore.score +
+      textScore.score +
+      (activeStatus ? ACTIVE_STATUS_SCORE : 0),
+  );
+
+  return {
+    confidence,
+    level: getDuplicateLevel(confidence),
+    reasons,
+    textSimilarity,
+  };
 }
 
 /**
@@ -54,7 +201,7 @@ interface ExistingReport {
 export async function POST(request: NextRequest): Promise<NextResponse> {
   try {
     const body: DuplicateCheckRequest = await request.json();
-    const { lat, lng, category } = body;
+    const { lat, lng, category, description } = body;
 
     // Validate input
     if (typeof lat !== 'number' || typeof lng !== 'number' || !category) {
@@ -62,18 +209,6 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         { error: 'Invalid request. Required: lat, lng, category' },
         { status: 400 },
       );
-    }
-
-    // Check if Firebase Admin credentials are available
-    if (!process.env.FIREBASE_CLIENT_EMAIL || !process.env.FIREBASE_PRIVATE_KEY) {
-      // Fall back to a simpler check without server-side Firestore
-      // This means duplicate detection won't work, but the form still functions
-      console.warn('Firebase Admin credentials not configured. Duplicate check disabled.');
-      return NextResponse.json({
-        hasDuplicates: false,
-        reports: [],
-        message: 'Duplicate check not available',
-      });
     }
 
     const db = getAdminFirestore();
@@ -110,8 +245,18 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
         // Calculate actual distance
         const distance = calculateDistance(lat, lng, data.location.lat, data.location.lng);
 
-        // Only include reports within the detection radius
-        if (distance <= DUPLICATE_DETECTION_RADIUS) {
+        // Score candidates instead of making a binary distance-only decision.
+        if (distance <= OUTER_DISTANCE_METERS) {
+          const score = scoreDuplicateCandidate({
+            categoryMatches: data.category === category,
+            currentDescription: description,
+            distance,
+            existingDescription: data.description,
+            reportDate,
+            status: data.status,
+            cutoffDate,
+          });
+
           potentialDuplicates.push({
             id: doc.id,
             category: data.category,
@@ -119,6 +264,10 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
             status: data.status,
             distance: Math.round(distance),
             createdAt: reportDate.toISOString(),
+            confidence: score.confidence,
+            level: score.level,
+            reasons: score.reasons,
+            textSimilarity: Number(score.textSimilarity.toFixed(2)),
           });
         }
       }
@@ -129,18 +278,38 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       (report, index, self) => index === self.findIndex((r) => r.id === report.id),
     );
 
-    // Sort by distance
-    uniqueReports.sort((a, b) => a.distance - b.distance);
+    const scoredReports = uniqueReports
+      .filter((report) => report.level !== 'none')
+      .sort((a, b) => b.confidence - a.confidence || a.distance - b.distance);
+
+    const bestConfidence = scoredReports[0]?.confidence ?? 0;
+    const bestLevel = getDuplicateLevel(bestConfidence);
 
     return NextResponse.json({
-      hasDuplicates: uniqueReports.length > 0,
-      reports: uniqueReports.slice(0, 5), // Return max 5 potential duplicates
-      radius: DUPLICATE_DETECTION_RADIUS,
+      hasDuplicates: bestLevel !== 'none',
+      level: bestLevel,
+      confidence: bestConfidence,
+      reports: scoredReports.slice(0, 5), // Return max 5 potential duplicates
+      radius: OUTER_DISTANCE_METERS,
+      strongRadius: DUPLICATE_DETECTION_RADIUS,
       timeWindow: DUPLICATE_DETECTION_WINDOW / (24 * 60 * 60 * 1000), // in days
+      thresholds: {
+        possible: POSSIBLE_DUPLICATE_THRESHOLD,
+        likely: LIKELY_DUPLICATE_THRESHOLD,
+      },
     });
   } catch (error) {
     console.error('Duplicate check error:', error);
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+
+    if (errorMessage.includes('Could not load the default credentials')) {
+      return NextResponse.json({
+        hasDuplicates: false,
+        reports: [],
+        message: 'Duplicate check not available',
+      });
+    }
+
     return NextResponse.json({ error: `Duplicate check failed: ${errorMessage}` }, { status: 500 });
   }
 }
